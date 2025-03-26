@@ -1,0 +1,160 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <xc.h>
+#include <assert.h>
+#include "uart.h"
+#include "BOARD.h"
+
+/*
+ * File:   uart_note.c
+ * Author: Petersen, ECE121 W2023
+ */
+ // Be sure this include is added to your uart.c code.
+#include <sys/attribs.h> 
+
+//#define task1
+#define task2
+#define BufferSize 16
+
+Buffer rxBuffer;
+Buffer txBuffer;
+
+typedef struct BufferObj{
+    unsigned char buffer[BufferSize];
+    int head;
+    int tail;
+    int full; //0 == not full 1 == full
+    int err; //0 == no err 1 == err
+}BufferOBj;
+
+Buffer Buffer_Init(){
+    Buffer cb;
+    cb = malloc(sizeof(Buffer)); //get memory for the struct 
+    assert(cb != NULL);
+    cb->head = 0;
+    cb->tail = 0;
+    cb->full = 0;
+    cb->err = 0; //set all 0s, init    
+    return cb;
+}
+/*******************************************************************************
+ * PRIVATE FUNCTIONS to add to your Uart.c file  
+ /**
+ * @Function Uart_Init(unsigned long baudrate)
+ * @param baudrate
+ * @return none
+ * @brief  Initializes UART1 to baudrate N81 and creates circ buffers
+ * @author instructor ece121 W2022 */
+void main(){
+    Uart_Init(115200);
+#ifdef task1
+    while(1){
+        if (U1STAbits.URXDA){
+            U1TXREG = U1RXREG; 
+        }
+    }
+#endif
+
+#ifdef task2
+    Buffer rxBuffer, txBuffer;
+    rxBuffer = Buffer_Init();
+    txBuffer = Buffer_Init();
+    printf("c");
+    printf("f");
+#endif     
+}
+void Uart_Init(unsigned long baudRate){
+    BOARD_Init();
+    U1MODE = 0; //clear UART
+    U1BRG = BOARD_GetPBClock() / (16 * baudRate) - 1;
+    U1MODEbits.PDSEL = 0b00; //8N1
+    U1MODEbits.STSEL = 0b0; //1 stop bit
+    U1MODEbits.ON = 1; //enable UART
+    
+    U1STAbits.UTXEN = 1; //enable TX pin
+    U1STAbits.URXEN = 1; //enable RX pin
+    
+    U1STAbits.URXISEL = 0b00; //config the interrupt register for rx
+    U1STAbits.UTXISEL = 0b00; //config the interrupt register for tx
+}
+
+/**
+ * @Function int PutChar(char ch)
+ * @param ch - the character to be sent out the serial port
+ * @return True if successful, else False if the buffer is full or busy.
+ * @brief  adds char to the end of the TX circular buffer
+ * @author instrutor ECE121 W2022 */
+int PutChar(Buffer cb, char ch){
+    if (cb->full){
+        cb->err = 1; //if full, set error, cant write to buffer
+        return 0;
+    }
+    cb->buffer[cb->tail] = ch; //buffer not full, write to tail
+    cb->tail = (cb->tail + 1) % BufferSize; //increment tail
+    if (cb->tail == cb->head){
+        cb->full = 1; //if buffer BECOMES full, set full flag
+    }
+    return 1;
+}
+
+/**
+ * @Function unsigned char GetChar(void)
+ * @param None.
+ * @return NULL for error or a Char in the argument.
+ * @brief  dequeues a character from the RX buffer,
+ * @author instructor, ECE121 W2022 */
+unsigned char GetChar(Buffer cb, unsigned char *data){
+    //checks if head and tail caught up, and it is not full (meaning empty buffer nothing to read)
+    if ((cb->head == cb->tail) && (!cb->full)){
+        int *nullptr = NULL;
+        return *nullptr; //if seg fault check here
+    }
+    //otherwise read the data from the head and set it to data
+    *data = cb->buffer[cb->head];
+    cb->head = (cb->head + 1) % BufferSize; //increment head after it has been read
+    if (cb->full){
+        cb->full = 0; //if the buffer was full, after reading it it should have become not full 
+    }
+    return *data;
+}                                                     
+ //******************************************************************************/
+
+/**
+* Refer to ...\docs\MPLAB C32 Libraries.pdf: 32-Bit Language Tools Library.
+* In sec. 2.13.2 helper function _mon_putc() is noted as normally using
+* UART2 for STDOUT character data flow. Adding a custom version of your own
+* can redirect this to UART1 by calling your putchar() function.   
+*/
+
+void mon_putc(Buffer cb, char c){
+ //your code goes here
+    while(!PutChar(cb, c)){
+        PutChar(cb, c); 
+    }
+}
+
+
+/****************************************************************************
+ * Function: IntUart1Handler
+ * Parameters: None.
+ * Returns: None.
+ * The PIC32 architecture calls a single interrupt vector for both the 
+ * TX and RX state machines. Each IRQ is persistent and can only be cleared
+ * after "removing the condition that caused it". This function is declared in
+ * sys/attribs.h. 
+ ****************************************************************************/
+void __ISR(_UART1_VECTOR) IntUart1Handler(void) {
+ //your interrupt handler code goes here
+    //check if rx has data
+    if (U1STAbits.URXDA){
+        IFS0bits.U1RXIF = 0; //clear the rx flag, located at RXIF
+        PutChar(rxBuffer, U1RXREG);
+        
+        
+    }
+    //check if tx buffer has at least one more space 
+    if (!U1STAbits.UTXBF){
+        IFS0bits.U1TXIF = 0; // clears the tx flag, located at TXIF
+        GetChar(txBuffer, (unsigned char*)U1TXREG);
+    }
+}   
